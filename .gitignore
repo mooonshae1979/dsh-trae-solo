@@ -1,0 +1,13 @@
+node_modules/
+lib/
+*.tsbuildinfo
+*.log
+.DS_Store
+server/auths/
+server/data/
+server/tw2api
+server/tw2api.exe~
+server/credit_bin
+server/signin_bin
+server/.env
+server/config.json
