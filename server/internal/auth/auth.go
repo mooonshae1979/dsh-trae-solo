@@ -3,6 +3,8 @@
 package auth
 
 import (
+	cryptorand "crypto/rand"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -182,6 +184,34 @@ func (a *Auth) SaveAtomic() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.saveAtomicLocked()
+}
+
+// RotateDeviceID 为账号生成并写入一个全新的 random deviceId（32 位 hex），
+// 供签到前调用以绕过 TRAE 的「一个设备只能签到一次」风控。
+// 返回新的 deviceId。调用方负责 SaveAtomic 落盘。
+func (a *Auth) RotateDeviceID() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.DeviceID = newDeviceID()
+	return a.DeviceID
+}
+
+// newDeviceID 生成 32 位十六进制随机 deviceId（与登录脚本生成的格式一致）。
+func newDeviceID() string {
+	const hex = "0123456789abcdef"
+	src := make([]byte, 16)
+	if _, err := cryptorand.Read(src); err != nil {
+		// 兜底：crypto/rand 失败时用时间戳+地址生成非加密随机数
+		fallback := fmt.Sprintf("%d%d", time.Now().UnixNano(), os.Getpid())
+		h := md5.Sum([]byte(fallback))
+		return fmt.Sprintf("%x", h)
+	}
+	out := make([]byte, 32)
+	for i, b := range src {
+		out[i*2] = hex[b>>4]
+		out[i*2+1] = hex[b&0x0f]
+	}
+	return string(out)
 }
 
 // saveAtomicLocked 是 SaveAtomic 的持锁内部版本；调用方必须已持有 a.mu。

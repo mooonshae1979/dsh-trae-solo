@@ -268,3 +268,49 @@ func TestCheckinStatusAndClaim(t *testing.T) {
 		t.Errorf("path=%s", path)
 	}
 }
+
+func TestCheckinClaimSuccess(t *testing.T) {
+	c := testClient(func(r *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(r.URL.Path, EpCheckinClaim) {
+			return nil, errors.New("wrong path: " + r.URL.Path)
+		}
+		return jsonResp(200, `{"code":0,"message":"success"}`), nil
+	})
+	if err := c.CheckinClaim(&auth.Auth{AccessToken: "at"}); err != nil {
+		t.Fatalf("claim should succeed: %v", err)
+	}
+}
+
+func TestCheckinClaimRateLimited(t *testing.T) {
+	c := testClient(func(r *http.Request) (*http.Response, error) {
+		return jsonResp(200, `{"code":9074,"message":"操作太过频繁啦，请稍后尝试"}`), nil
+	})
+	err := c.CheckinClaim(&auth.Auth{AccessToken: "at"})
+	if err == nil {
+		t.Fatal("expected error for code 9074")
+	}
+	var ue *Error
+	if !errors.As(err, &ue) {
+		t.Fatalf("expected *Error, got %T", err)
+	}
+	if ue.Kind != ErrCheckinRate {
+		t.Errorf("kind=%v want ErrCheckinRate", ue.Kind)
+	}
+}
+
+func TestCheckinClaimBusinessRejected(t *testing.T) {
+	c := testClient(func(r *http.Request) (*http.Response, error) {
+		return jsonResp(200, `{"code":1001,"message":"some business error"}`), nil
+	})
+	err := c.CheckinClaim(&auth.Auth{AccessToken: "at"})
+	if err == nil {
+		t.Fatal("expected error for non-zero code")
+	}
+	var ue *Error
+	if !errors.As(err, &ue) {
+		t.Fatalf("expected *Error, got %T", err)
+	}
+	if ue.Kind != ErrCheckinRejected {
+		t.Errorf("kind=%v want ErrCheckinRejected", ue.Kind)
+	}
+}

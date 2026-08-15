@@ -11,6 +11,9 @@
   },
   "schedule": {
     "checkin_hour": 9,
+    "checkin_window_start": 0,
+    "checkin_window_end": 9,
+    "checkin_gap_min": 60,
     "refresh_hours": [3]
   },
   "upstream": {

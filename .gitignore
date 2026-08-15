@@ -11,3 +11,12 @@ server/credit_bin
 server/signin_bin
 server/.env
 server/config.json
+
+# 本机运行时文件（不入库）
+auths/
+data/
+config.json
+*.exe
+*.exe~
+*.ps1
+login.py

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -38,6 +39,101 @@ func TestNextFireMergesSchedules(t *testing.T) {
 	next := nextFire(now, []int{9, 21, 22})
 	if next.Hour() != 21 {
 		t.Errorf("next=%v want 21 (earliest of 21/22)", next)
+	}
+}
+
+func TestCheckinWindowDetection(t *testing.T) {
+	cases := []struct {
+		cfg        Config
+		wantStart  int
+		wantEnd    int
+		wantWindow bool
+	}{
+		{Config{CheckinStart: 0, CheckinEnd: 2}, 0, 2, true},
+		{Config{CheckinStart: 22, CheckinEnd: 2}, 22, 2, true}, // 跨日窗口
+		{Config{CheckinStart: 0, CheckinEnd: 0, CheckinHour: 9}, 9, 10, false}, // 未配置 → 整点回退
+		{Config{CheckinStart: 3, CheckinEnd: 3}, 3, 3, false},  // 窗口为空 → 回退
+	}
+	for _, c := range cases {
+		start, end, ok := c.cfg.checkinWindow()
+		if ok != c.wantWindow || start != c.wantStart || end != c.wantEnd {
+			t.Errorf("checkinWindow(%+v)=(%d,%d,%v) want (%d,%d,%v)",
+				c.cfg, start, end, ok, c.wantStart, c.wantEnd, c.wantWindow)
+		}
+	}
+}
+
+func TestCheckinScheduleWithinWindow(t *testing.T) {
+	// 窗口 [0,9)，4 个账号：每个触发时间落在窗口内，且相邻错开 >= gap。
+	now := time.Date(2026, 7, 27, 10, 0, 0, 0, time.Local)
+	p := pool.New("")
+	for _, uid := range []string{"u1", "u2", "u3", "u4"} {
+		p.Add(&auth.Auth{UID: uid, AccessToken: "at", RefreshToken: "rt", ExpiresAt: 9999999999})
+	}
+	s := New(Config{Pool: p, CheckinStart: 0, CheckinEnd: 9, CheckinGapMin: 60})
+	for i := 0; i < 20; i++ {
+		plan := s.checkinSchedule(now)
+		if len(plan) != 4 {
+			t.Fatalf("plan len=%d want 4", len(plan))
+		}
+		// 所有时间在窗口内（次日 00:00~09:00）
+		times := make([]time.Time, 0, len(plan))
+		for _, ts := range plan {
+			if ts.Day() != 28 {
+				t.Fatalf("day=%d want 28: %v", ts.Day(), ts)
+			}
+			if ts.Hour() < 0 || ts.Hour() >= 9 {
+				t.Fatalf("hour=%d out of window [0,9): %v", ts.Hour(), ts)
+			}
+			times = append(times, ts)
+		}
+		// 相邻错开 >= 60 分钟
+		sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+		for i := 1; i < len(times); i++ {
+			gap := times[i].Sub(times[i-1])
+			if gap < 60*time.Minute {
+				t.Fatalf("gap=%v < 60m between %v and %v", gap, times[i-1], times[i])
+			}
+		}
+	}
+}
+
+func TestCheckinScheduleRollsToNextDay(t *testing.T) {
+	// 今天 01:30（窗口内但已过起点），计划应滚到次日窗口。
+	now := time.Date(2026, 7, 27, 1, 30, 0, 0, time.Local)
+	p := pool.New("")
+	p.Add(&auth.Auth{UID: "u1", AccessToken: "at", RefreshToken: "rt", ExpiresAt: 9999999999})
+	s := New(Config{Pool: p, CheckinStart: 0, CheckinEnd: 9, CheckinGapMin: 60})
+	for i := 0; i < 20; i++ {
+		plan := s.checkinSchedule(now)
+		if len(plan) != 1 {
+			t.Fatalf("plan len=%d want 1", len(plan))
+		}
+		for _, ts := range plan {
+			if ts.Day() != 28 {
+				t.Fatalf("day=%d want 28 (roll to next window): %v", ts.Day(), ts)
+			}
+			if ts.Hour() < 0 || ts.Hour() >= 9 {
+				t.Fatalf("hour=%d out of window: %v", ts.Hour(), ts)
+			}
+		}
+	}
+}
+
+func TestInCheckinWindow(t *testing.T) {
+	loc := time.Local
+	s := New(Config{CheckinStart: 0, CheckinEnd: 9})
+	if !s.inCheckinWindow(time.Date(2026, 7, 27, 0, 30, 0, 0, loc)) {
+		t.Error("00:30 should be in window [0,9)")
+	}
+	if !s.inCheckinWindow(time.Date(2026, 7, 27, 8, 59, 0, 0, loc)) {
+		t.Error("08:59 should be in window [0,9)")
+	}
+	if s.inCheckinWindow(time.Date(2026, 7, 27, 9, 0, 0, 0, loc)) {
+		t.Error("09:00 should be outside window [0,9)")
+	}
+	if s.inCheckinWindow(time.Date(2026, 7, 27, 12, 0, 0, 0, loc)) {
+		t.Error("12:00 should be outside window [0,9)")
 	}
 }
 
@@ -103,7 +199,7 @@ func TestRunCheckinReenablesCoolingAccount(t *testing.T) {
 	p.Cooldown("u1", pool.CoolPlan, time.Hour, "plan limit")
 
 	s := newTestScheduler(f, p, srv)
-	s.RunCheckinNow()
+	s.runCheckinOne("u1")
 	if f.checkinCalls.Load() != 1 {
 		t.Errorf("checkin status calls=%d", f.checkinCalls.Load())
 	}
@@ -129,7 +225,7 @@ func TestRunCheckinSkipsDisabled(t *testing.T) {
 	p.Disable("u1", "session dead")
 
 	s := newTestScheduler(f, p, srv)
-	s.RunCheckinNow()
+	s.runCheckinOne("u1")
 	if f.checkinCalls.Load() != 0 {
 		t.Errorf("disabled account should be skipped, calls=%d", f.checkinCalls.Load())
 	}

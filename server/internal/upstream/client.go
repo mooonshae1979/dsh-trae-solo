@@ -19,13 +19,15 @@ import (
 type ErrKind int
 
 const (
-	ErrNone        ErrKind = iota // 成功
-	ErrPlanLimit                  // 1005 + plan → 权益不足（硬冷却 12h）
-	ErrSoftRate                   // 429 → 短冷却 60s
-	ErrSessionDead                // 401 + Cloud-IDE-JWT 失效 → 禁用
-	ErrNotFound                   // 404 → 短冷却 60s 不累计 errCount
-	ErrServer                     // 5xx
-	ErrClient                     // 其他 4xx
+	ErrNone           ErrKind = iota // 成功
+	ErrPlanLimit                     // 1005 + plan → 权益不足（硬冷却 12h）
+	ErrSoftRate                      // 429 → 短冷却 60s
+	ErrSessionDead                   // 401 + Cloud-IDE-JWT 失效 → 禁用
+	ErrNotFound                      // 404 → 短冷却 60s 不累计 errCount
+	ErrServer                        // 5xx
+	ErrClient                        // 其他 4xx
+	ErrCheckinRate                   // 签到被服务端限频（HTTP 200 + code:9074）
+	ErrCheckinRejected               // 签到业务拒绝（HTTP 200 + code!=0 且非 9074）
 )
 
 func (k ErrKind) String() string {
@@ -42,6 +44,10 @@ func (k ErrKind) String() string {
 		return "server"
 	case ErrClient:
 		return "client"
+	case ErrCheckinRate:
+		return "checkin_rate"
+	case ErrCheckinRejected:
+		return "checkin_rejected"
 	default:
 		return "none"
 	}
@@ -341,15 +347,38 @@ func (c *Client) CheckinStatus(a *auth.Auth) (checkedIn bool, credits int64, ena
 	return resp.CheckedIn, resp.Credits, resp.Enable, nil
 }
 
-// CheckinClaim 执行签到。
+// CheckinClaim 执行签到。TRAE 服务端对"操作太频繁"返回 HTTP 200 但业务
+// code=9074（此前被 doJSON 忽略而误报成功）；这里校验业务 code，非 0 时
+// 返回带分类的 *Error，fallback 到 HTTP 状态码分类。
 func (c *Client) CheckinClaim(a *auth.Auth) error {
 	req, err := http.NewRequest(http.MethodPost, c.ugBase()+EpCheckinClaim, bytes.NewReader([]byte("{}")))
 	if err != nil {
 		return err
 	}
 	UgHeaders(req, a)
-	_, err = c.doJSON(req)
-	return err
+	raw, err := c.doJSON(req)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return err
+	}
+	if resp.Code != 0 {
+		kind := ErrCheckinRejected
+		if resp.Code == 9074 {
+			kind = ErrCheckinRate // 操作太频繁 → 限频
+		}
+		msg := resp.Message
+		if msg == "" {
+			msg = string(raw)
+		}
+		return &Error{Kind: kind, Status: 200, Msg: truncate(msg, 200)}
+	}
+	return nil
 }
 
 // UserEntUsage 聚合积分（ide_user_ent_usage 的 credits_limit 求和）。

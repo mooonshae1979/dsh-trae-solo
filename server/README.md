@@ -11,6 +11,9 @@ TRAE Work (SOLO CN) 的 OpenAI 兼容反向代理。把 TRAE SOLO 免费对话�
 - **OpenAI 兼容 API**：`POST /v1/chat/completions`（流式/非流式）、`GET /v1/models`
 - **多账号池**：积分降序挑选，1005/429/401/5xx 自动冷却、禁用、轮转
 - **自动签到**：每日定时签到 + 手动批量签到（`signin.sh`）
+  - 签到窗口可配置（默认 00:00~09:00），窗口内随机时刻触发
+  - 多账号在窗口内**错开签到**（默认每账号至少间隔 1 小时），降低触发 TRAE 风控概率
+  - 每次签到前**自动轮换全新 deviceId**，规避 TRAE「一个设备只能签到一次」限制
 - **积分查询**：全账号/指定账号日报（`credit.sh`）
 - **Token 自动刷新**：过期前 24h 预刷新，refreshToken 轮换落盘
 - **登录闭环**：`login.sh` 自生成登录链接 → 浏览器登录 → 粘贴回调链接 → 换 token 落盘
@@ -70,7 +73,25 @@ go build -o tw2api ./cmd/server
 配置可选 `config.json`（参考 `config.example.json`），全部项可用 `TW2A_*` env 覆盖：
 `TW2A_LISTEN` / `TW2A_AUTH_DIR` / `TW2A_STATE_FILE` / `TW2A_DEFAULT_MODEL` /
 `TW2A_PLAN_CREDIT` / `TW2A_SOFT_RATE` / `TW2A_ERR_THRESHOLD` / `TW2A_ERR_COOLDOWN` /
-`TW2A_CHECKIN_HOUR` / `TW2A_TIMEOUT_SECONDS`。`TW2A_API_KEY` **只能**从 env 读。
+`TW2A_CHECKIN_HOUR` / `TW2A_CHECKIN_WINDOW_START` / `TW2A_CHECKIN_WINDOW_END` /
+`TW2A_CHECKIN_GAP_MIN` / `TW2A_TIMEOUT_SECONDS`。`TW2A_API_KEY` **只能**从 env 读。
+
+### 签到调度配置
+
+```jsonc
+{
+  "schedule": {
+    "checkin_hour": 9,            // 旧配置：整点签到小时（窗口未配置时生效）
+    "checkin_window_start": 0,    // 签到随机窗口起始小时（含），默认 0
+    "checkin_window_end": 9,      // 签到随机窗口结束小时（不含），默认 9 → [0,9) 即 00:00~09:00
+    "checkin_gap_min": 60,        // 各账号签到最小错开分钟数，默认 60
+    "refresh_hours": [3]          // token 预刷新小时
+  }
+}
+```
+
+窗口模式下，每天在窗口内为每个账号分配一个随机触发时间，且相邻账号至少错开
+`checkin_gap_min` 分钟；每次签到前自动轮换全新 deviceId 并落盘。
 
 ## 运维
 
