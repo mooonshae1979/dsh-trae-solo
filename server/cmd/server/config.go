@@ -28,9 +28,9 @@ type Config struct {
 
 	Schedule struct {
 		CheckinHour  int   `json:"checkin_hour"`   // 9（旧：整点触发；窗口未配置时生效）
-		CheckinStart int   `json:"checkin_window_start"` // 0（签到随机窗口起始小时，含）
-		CheckinEnd   int   `json:"checkin_window_end"`   // 9（签到随机窗口结束小时，不含）
-		CheckinGap   int   `json:"checkin_gap_min"`      // 60（各账号签到最小错开分钟数）
+		CheckinStart int   `json:"checkin_window_start"` // 0（签到窗口起始小时，含）
+		CheckinEnd   int   `json:"checkin_window_end"`   // 9（签到窗口结束小时，不含）
+		CheckinMin   int   `json:"checkin_minute"`       // 10（每个整点后几分钟内签到，模仿客户端时间段）
 		RefreshHours []int `json:"refresh_hours"` // [3]
 	} `json:"schedule"`
 
@@ -60,7 +60,7 @@ func Default() *Config {
 	c.Schedule.CheckinHour = 9
 	c.Schedule.CheckinStart = 0
 	c.Schedule.CheckinEnd = 9
-	c.Schedule.CheckinGap = 60
+	c.Schedule.CheckinMin = 10
 	c.Schedule.RefreshHours = []int{3}
 	c.Upstream.TimeoutSeconds = 120
 	return c
@@ -134,9 +134,9 @@ func applyEnv(c *Config) {
 			c.Schedule.CheckinEnd = n
 		}
 	}
-	if v := os.Getenv("TW2A_CHECKIN_GAP_MIN"); v != "" {
+	if v := os.Getenv("TW2A_CHECKIN_MINUTE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
-			c.Schedule.CheckinGap = n
+			c.Schedule.CheckinMin = n
 		}
 	}
 	if v := os.Getenv("TW2A_TIMEOUT_SECONDS"); v != "" {
@@ -177,8 +177,8 @@ func (c *Config) normalize() error {
 		c.Schedule.CheckinStart = 0
 		c.Schedule.CheckinEnd = 0
 	}
-	if c.Schedule.CheckinGap < 1 {
-		c.Schedule.CheckinGap = 60
+	if c.Schedule.CheckinMin < 1 {
+		c.Schedule.CheckinMin = 10
 	}
 	if c.DefaultModel == "" {
 		c.DefaultModel = "glm-5.2"

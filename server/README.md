@@ -74,7 +74,7 @@ go build -o tw2api ./cmd/server
 `TW2A_LISTEN` / `TW2A_AUTH_DIR` / `TW2A_STATE_FILE` / `TW2A_DEFAULT_MODEL` /
 `TW2A_PLAN_CREDIT` / `TW2A_SOFT_RATE` / `TW2A_ERR_THRESHOLD` / `TW2A_ERR_COOLDOWN` /
 `TW2A_CHECKIN_HOUR` / `TW2A_CHECKIN_WINDOW_START` / `TW2A_CHECKIN_WINDOW_END` /
-`TW2A_CHECKIN_GAP_MIN` / `TW2A_TIMEOUT_SECONDS`。`TW2A_API_KEY` **只能**从 env 读。
+`TW2A_CHECKIN_MINUTE` / `TW2A_TIMEOUT_SECONDS`。`TW2A_API_KEY` **只能**从 env 读。
 
 ### 签到调度配置
 
@@ -82,16 +82,17 @@ go build -o tw2api ./cmd/server
 {
   "schedule": {
     "checkin_hour": 9,            // 旧配置：整点签到小时（窗口未配置时生效）
-    "checkin_window_start": 0,    // 签到随机窗口起始小时（含），默认 0
-    "checkin_window_end": 9,      // 签到随机窗口结束小时（不含），默认 9 → [0,9) 即 00:00~09:00
-    "checkin_gap_min": 60,        // 各账号签到最小错开分钟数，默认 60
+    "checkin_window_start": 0,    // 签到窗口起始小时（含），默认 0
+    "checkin_window_end": 9,      // 签到窗口结束小时（不含），默认 9 → [0,9) 即 00:00~09:00
+    "checkin_minute": 10,         // 每个整点后几分钟内签到，默认 10（如 00:00~00:10 签一个账号）
     "refresh_hours": [3]          // token 预刷新小时
   }
 }
 ```
 
-窗口模式下，每天在窗口内为每个账号分配一个随机触发时间，且相邻账号至少错开
-`checkin_gap_min` 分钟；每次签到前自动轮换全新 deviceId 并落盘。
+窗口模式下，每个整点后 `checkin_minute` 分钟内**签一个账号**（账号按序轮转，
+一个整点一个账号），每次签到前自动轮换全新 deviceId 并落盘；签到请求头
+尽可能模仿官方客户端（完整 IDE/设备指纹头），降低被 TRAE 风控的概率。
 
 ## 运维
 

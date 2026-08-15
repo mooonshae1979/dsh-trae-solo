@@ -27,8 +27,8 @@ func TestDefault(t *testing.T) {
 	if c.Schedule.CheckinStart != 0 || c.Schedule.CheckinEnd != 9 {
 		t.Errorf("checkin window=(%d,%d) want (0,9)", c.Schedule.CheckinStart, c.Schedule.CheckinEnd)
 	}
-	if c.Schedule.CheckinGap != 60 {
-		t.Errorf("checkin_gap_min=%d want 60", c.Schedule.CheckinGap)
+	if c.Schedule.CheckinMin != 10 {
+		t.Errorf("checkin_minute=%d want 10", c.Schedule.CheckinMin)
 	}
 }
 

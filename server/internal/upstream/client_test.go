@@ -234,17 +234,20 @@ func TestUserEntUsageAggregation(t *testing.T) {
 		if r.Header.Get("Authorization") != "Cloud-IDE-JWT at" {
 			return nil, errors.New("missing auth header")
 		}
+		// 每个包：limit - used = remain；含 used 的包验证剩余计算
 		return jsonResp(200, `{"is_credits_billing":true,"user_entitlement_pack_list":[
-			{"entitlement_base_info":{"quota":{"credits_limit":2000}}},
-			{"entitlement_base_info":{"quota":{"credits_limit":500}}}
+			{"entitlement_base_info":{"quota":{"credits_limit":2000}},"usage":{"credits_amount":0}},
+			{"entitlement_base_info":{"quota":{"credits_limit":500}},"usage":{"credits_amount":100}},
+			{"entitlement_base_info":{"quota":{"credits_limit":0}},"usage":{"credits_amount":0}}
 		]}`), nil
 	})
 	remain, err := c.UserEntUsage(&auth.Auth{AccessToken: "at"})
 	if err != nil {
 		t.Fatalf("ent usage: %v", err)
 	}
-	if remain != 2500 {
-		t.Errorf("remain=%d want 2500", remain)
+	// 2000-0 + 500-100 = 2400；limit=0 的包跳过
+	if remain != 2400 {
+		t.Errorf("remain=%d want 2400 (limit - used)", remain)
 	}
 }
 

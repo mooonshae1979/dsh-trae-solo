@@ -56,6 +56,39 @@ func UgHeaders(req *http.Request, a *auth.Auth) {
 	}
 }
 
+// ClientCheckinHeaders 设置签到请求头，尽可能模仿官方客户端。
+// 官方客户端签到会带上完整的 IDE/设备指纹头，脚本只用 UgHeaders 容易被
+// TRAE 风控识别为异常（9074）。这里补全客户端同款头。
+func ClientCheckinHeaders(req *http.Request, a *auth.Auth) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", clientUA)
+	at := a.JWT() // 读锁快照
+	req.Header.Set("Authorization", "Cloud-IDE-JWT "+at)
+	req.Header.Set("X-Cloudide-Token", at)
+	req.Header.Set("X-Ide-Token", at)
+	if a.UID != "" {
+		req.Header.Set("X-Uid", a.UID)
+	}
+	req.Header.Set("X-App-Id", AppID)
+	req.Header.Set("X-App-Version", "default")
+	req.Header.Set("X-Ide-Version", IdeVersion)
+	req.Header.Set("X-Ide-Version-Code", IdeVersionCode)
+	req.Header.Set("X-App-Version-Code", IdeVersionCode)
+	req.Header.Set("X-Ide-Version-Type", "stable")
+	req.Header.Set("X-Device-Type", "windows")
+	req.Header.Set("X-OS-Version", OSVersion)
+	req.Header.Set("X-Device-Brand", DeviceBrand)
+	req.Header.Set("Request-Traffic-Type", "prod")
+	req.Header.Set("X-User-Region", "CN")
+	if a.MachineID != "" {
+		req.Header.Set("X-Machine-Id", a.MachineID)
+	}
+	if a.DeviceID != "" {
+		req.Header.Set("X-Device-Id", a.DeviceID)
+	}
+}
+
 // OAuthHeaders 设置 ExchangeToken / GetUserInfo 所需头（无签名，仅 UA）。
 func OAuthHeaders(req *http.Request) {
 	req.Header.Set("Content-Type", "application/json")

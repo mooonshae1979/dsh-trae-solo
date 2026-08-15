@@ -331,7 +331,7 @@ func (c *Client) CheckinStatus(a *auth.Auth) (checkedIn bool, credits int64, ena
 	if err != nil {
 		return false, 0, false, err
 	}
-	UgHeaders(req, a)
+	ClientCheckinHeaders(req, a) // 模仿客户端完整头，降低风控概率
 	data, err := c.doJSON(req)
 	if err != nil {
 		return false, 0, false, err
@@ -355,7 +355,7 @@ func (c *Client) CheckinClaim(a *auth.Auth) error {
 	if err != nil {
 		return err
 	}
-	UgHeaders(req, a)
+	ClientCheckinHeaders(req, a) // 模仿客户端完整头，降低风控概率
 	raw, err := c.doJSON(req)
 	if err != nil {
 		return err
@@ -381,7 +381,9 @@ func (c *Client) CheckinClaim(a *auth.Auth) error {
 	return nil
 }
 
-// UserEntUsage 聚合积分（ide_user_ent_usage 的 credits_limit 求和）。
+// UserEntUsage 聚合剩余积分（ide_user_ent_usage 的 credits_limit - credits_amount 求和）。
+// 每个权益包的剩余 = credits_limit - usage.credits_amount（已用量），
+// 与 credit_bin 工具的计算方式一致。
 func (c *Client) UserEntUsage(a *auth.Auth) (remain int64, err error) {
 	req, err := http.NewRequest(http.MethodPost, c.ugBase()+EpEntUsage, bytes.NewReader([]byte("{}")))
 	if err != nil {
@@ -400,13 +402,21 @@ func (c *Client) UserEntUsage(a *auth.Auth) (remain int64, err error) {
 					CreditsLimit int64 `json:"credits_limit"`
 				} `json:"quota"`
 			} `json:"entitlement_base_info"`
+			Usage struct {
+				CreditsAmount float64 `json:"credits_amount"`
+			} `json:"usage"`
 		} `json:"user_entitlement_pack_list"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return 0, fmt.Errorf("ent usage parse: %w", err)
 	}
 	for _, p := range resp.UserEntitlementPackList {
-		remain += p.EntitlementBaseInfo.Quota.CreditsLimit
+		l := p.EntitlementBaseInfo.Quota.CreditsLimit
+		if l <= 0 {
+			continue
+		}
+		used := int64(p.Usage.CreditsAmount)
+		remain += l - used
 	}
 	return remain, nil
 }

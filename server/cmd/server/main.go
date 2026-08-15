@@ -44,14 +44,14 @@ func main() {
 	}
 
 	sch := scheduler.New(scheduler.Config{
-		Pool:         p,
-		Upstream:     up,
-		CheckinHour:  cfg.Schedule.CheckinHour,
-		CheckinStart: cfg.Schedule.CheckinStart,
-		CheckinEnd:   cfg.Schedule.CheckinEnd,
-		CheckinGapMin: cfg.Schedule.CheckinGap,
-		RefreshHours: cfg.Schedule.RefreshHours,
-		RefreshSkew:  24 * time.Hour,
+		Pool:          p,
+		Upstream:      up,
+		CheckinHour:   cfg.Schedule.CheckinHour,
+		CheckinStart:  cfg.Schedule.CheckinStart,
+		CheckinEnd:    cfg.Schedule.CheckinEnd,
+		CheckinMinute: cfg.Schedule.CheckinMin,
+		RefreshHours:  cfg.Schedule.RefreshHours,
+		RefreshSkew:   24 * time.Hour,
 	})
 
 	h := server.NewHandler(server.Config{

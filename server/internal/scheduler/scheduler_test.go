@@ -64,19 +64,19 @@ func TestCheckinWindowDetection(t *testing.T) {
 }
 
 func TestCheckinScheduleWithinWindow(t *testing.T) {
-	// 窗口 [0,9)，4 个账号：每个触发时间落在窗口内，且相邻错开 >= gap。
+	// 窗口 [0,9)，4 个账号：每个账号分配到独立整点，整点后 CheckinMinute 分钟内触发。
 	now := time.Date(2026, 7, 27, 10, 0, 0, 0, time.Local)
 	p := pool.New("")
 	for _, uid := range []string{"u1", "u2", "u3", "u4"} {
 		p.Add(&auth.Auth{UID: uid, AccessToken: "at", RefreshToken: "rt", ExpiresAt: 9999999999})
 	}
-	s := New(Config{Pool: p, CheckinStart: 0, CheckinEnd: 9, CheckinGapMin: 60})
+	s := New(Config{Pool: p, CheckinStart: 0, CheckinEnd: 9, CheckinMinute: 10})
 	for i := 0; i < 20; i++ {
 		plan := s.checkinSchedule(now)
 		if len(plan) != 4 {
 			t.Fatalf("plan len=%d want 4", len(plan))
 		}
-		// 所有时间在窗口内（次日 00:00~09:00）
+		// 每个账号在独立整点后 10 分钟内（次日 00:00~04:10）
 		times := make([]time.Time, 0, len(plan))
 		for _, ts := range plan {
 			if ts.Day() != 28 {
@@ -85,14 +85,17 @@ func TestCheckinScheduleWithinWindow(t *testing.T) {
 			if ts.Hour() < 0 || ts.Hour() >= 9 {
 				t.Fatalf("hour=%d out of window [0,9): %v", ts.Hour(), ts)
 			}
+			if ts.Minute() >= 10 {
+				t.Fatalf("minute=%d >= 10 (should be within 10min after hour): %v", ts.Minute(), ts)
+			}
 			times = append(times, ts)
 		}
-		// 相邻错开 >= 60 分钟
+		// 每个账号在独立整点（00,01,02,03 各一个），相邻至少错开 ~50 分钟
 		sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
 		for i := 1; i < len(times); i++ {
 			gap := times[i].Sub(times[i-1])
-			if gap < 60*time.Minute {
-				t.Fatalf("gap=%v < 60m between %v and %v", gap, times[i-1], times[i])
+			if gap < 50*time.Minute {
+				t.Fatalf("gap=%v < 50m between %v and %v", gap, times[i-1], times[i])
 			}
 		}
 	}
@@ -103,7 +106,7 @@ func TestCheckinScheduleRollsToNextDay(t *testing.T) {
 	now := time.Date(2026, 7, 27, 1, 30, 0, 0, time.Local)
 	p := pool.New("")
 	p.Add(&auth.Auth{UID: "u1", AccessToken: "at", RefreshToken: "rt", ExpiresAt: 9999999999})
-	s := New(Config{Pool: p, CheckinStart: 0, CheckinEnd: 9, CheckinGapMin: 60})
+	s := New(Config{Pool: p, CheckinStart: 0, CheckinEnd: 9, CheckinMinute: 10})
 	for i := 0; i < 20; i++ {
 		plan := s.checkinSchedule(now)
 		if len(plan) != 1 {
@@ -115,6 +118,9 @@ func TestCheckinScheduleRollsToNextDay(t *testing.T) {
 			}
 			if ts.Hour() < 0 || ts.Hour() >= 9 {
 				t.Fatalf("hour=%d out of window: %v", ts.Hour(), ts)
+			}
+			if ts.Minute() >= 10 {
+				t.Fatalf("minute=%d >= 10: %v", ts.Minute(), ts)
 			}
 		}
 	}

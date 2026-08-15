@@ -15,12 +15,12 @@ import (
 
 // Config 调度器依赖。
 type Config struct {
-	Pool             *pool.Pool
-	Upstream         *upstream.Client
-	CheckinHour      int           // 每日签到小时（旧配置，随机窗口未启用时按整点触发，默认 9）
-	CheckinStart     int           // 签到随机窗口起始小时（含），默认 0
-	CheckinEnd       int           // 签到随机窗口结束小时（不含），默认 9 → 窗口 [0,9) 即 00:00~09:00
-	CheckinGapMin    int           // 各账号签到最小错开分钟数，默认 60（至少错开 1 小时）
+	Pool         *pool.Pool
+	Upstream     *upstream.Client
+	CheckinHour  int           // 每日签到小时（旧配置，随机窗口未启用时按整点触发，默认 9）
+	CheckinStart int           // 签到窗口起始小时（含），默认 0
+	CheckinEnd   int           // 签到窗口结束小时（不含），默认 9 → 窗口 [0,9) 即 00:00~09:00
+	CheckinMinute    int           // 每个整点后几分钟内签到，默认 10（如 00:00~00:10 签一个账号）
 	RefreshHours     []int         // token 预刷新小时，默认 [3]
 	RefreshSkew      time.Duration // 预刷新窗口，默认 24h
 }
@@ -53,8 +53,8 @@ func New(cfg Config) *Scheduler {
 	if cfg.CheckinHour < 0 {
 		cfg.CheckinHour = 9
 	}
-	if cfg.CheckinGapMin <= 0 {
-		cfg.CheckinGapMin = 60
+	if cfg.CheckinMinute <= 0 {
+		cfg.CheckinMinute = 10
 	}
 	if len(cfg.RefreshHours) == 0 {
 		cfg.RefreshHours = []int{3}
@@ -80,10 +80,11 @@ func nextFire(now time.Time, hours []int) time.Time {
 	return earliest
 }
 
-// checkinSchedule 为每个账号生成当天的签到触发时间（窗口内错开）。
-// 返回 UID → 触发时间 的映射。跨日窗口时 baseDay 为窗口起始日。
-// 算法：账号在窗口内按序均分基准点，每个账号在基准点 ±jitter 内随机，
-// jitter 保证相邻账号触发时间至少错开 CheckinGapMin 分钟。
+// checkinSchedule 为每个账号生成当天的签到触发时间。
+// 新机制：窗口 [start, end) 内，每个整点后 CheckinMinute 分钟内签一个账号。
+// 账号按序轮转：账号 i 在 (start+i):00 后 CheckinMinute 分钟内随机触发。
+// 若账号数超过窗口小时数，多余账号顺延到窗口结束后的整点（仍错开）。
+// 返回 UID → 触发时间 的映射。
 func (s *Scheduler) checkinSchedule(now time.Time) map[string]time.Time {
 	start, end, ok := s.cfg.checkinWindow()
 	if !ok {
@@ -98,41 +99,22 @@ func (s *Scheduler) checkinSchedule(now time.Time) map[string]time.Time {
 	if !base.After(now) {
 		base = base.Add(24 * time.Hour)
 	}
-	// 窗口跨度（秒）
+	// 窗口跨度（小时）
 	spanHour := end - start
 	if spanHour <= 0 {
 		spanHour += 24
 	}
-	spanSec := spanHour * 3600
-	n := len(uids)
-	gapSec := s.cfg.CheckinGapMin * 60
+	// 每个整点后 CheckinMinute 分钟窗口（秒）
+	winSec := s.cfg.CheckinMinute * 60
 
-	// 基准点等分窗口；jitter 保证相邻账号至少 gapSec 间隔
-	segLen := spanSec / n
-	jitter := segLen/2 - gapSec/2
-	if jitter < 0 {
-		jitter = 0 // 窗口不足，退化为按 segLen 硬分
-	}
-
-	out := make(map[string]time.Time, n)
+	out := make(map[string]time.Time, len(uids))
 	for i, st := range uids {
-		baseOffset := i * segLen
-		var offset int
-		if jitter > 0 {
-			offset = baseOffset + rand.Intn(jitter*2) - jitter
-		} else {
-			offset = baseOffset + rand.Intn(segLen)
-			if offset > spanSec {
-				offset = spanSec
-			}
-		}
-		if offset < 0 {
-			offset = 0
-		}
-		if offset > spanSec-1 {
-			offset = spanSec - 1
-		}
-		out[st.UID] = base.Add(time.Duration(offset) * time.Second)
+		// 账号 i 分配到第 i 个整点（窗口内；超出窗口则顺延到窗口外整点）
+		slot := i
+		hourStart := base.Add(time.Duration(slot) * time.Hour)
+		// 整点后 [0, winSec) 秒内随机
+		offset := rand.Intn(winSec)
+		out[st.UID] = hourStart.Add(time.Duration(offset) * time.Second)
 	}
 	return out
 }

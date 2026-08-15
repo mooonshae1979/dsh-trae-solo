@@ -67,7 +67,30 @@ func NewHandler(cfg Config) *Handler {
 	h.mux.HandleFunc("GET /v1/models", h.withAuth(h.models))
 	h.mux.HandleFunc("GET /status", h.withAuth(h.status))
 	h.mux.HandleFunc("GET /healthz", h.healthz)
+	// 内部接口：credits_api 每 60 秒刷新后推送各账号剩余积分，供 pool 挑选。
+	h.mux.HandleFunc("POST /internal/credits", h.withAuth(h.updateCredits))
 	return h
+}
+
+// updateCredits 接收 credits_api 推送的剩余积分，更新 pool 供账号挑选。
+// 请求体: {"accounts":[{"uid":"...","remain":1234}, ...]}
+func (h *Handler) updateCredits(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Accounts []struct {
+			UID    string `json:"uid"`
+			Remain int64  `json:"remain"`
+		} `json:"accounts"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad json: " + err.Error()})
+		return
+	}
+	for _, a := range req.Accounts {
+		if a.UID != "" {
+			h.cfg.Pool.SetCredits(a.UID, a.Remain)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "updated": len(req.Accounts)})
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
